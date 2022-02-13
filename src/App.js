@@ -1,78 +1,85 @@
 import { useState, useEffect } from "react";
-import { useCMDEnterPressed } from "./hooks";
-import { Editor, EditorState } from "draft-js";
+import { submitPrompt } from "./api";
+import {
+  getDefaultKeyBinding,
+  KeyBindingUtil,
+  Editor,
+  EditorState
+} from "draft-js";
+
+const EDITOR_CMD_SAVE = "editor-cmd-save";
+const EDITOR_CMD_SUBMIT = "editor-cmd-enter";
 
 // Styles
 import "./styles.css";
 
-const submitPrompt = (input) => {
-  fetch("http://localhost:8080/submit", {
-    method: "POST",
-    body: JSON.stringify(input),
-    headers: {
-      "Content-Type": "application/json"
-    }
-  })
-    .then((res) => res.json())
-    .then(
-      (result) => {
-        console.log(`Submit response: ${result}`);
-      },
-      // Note: it's important to handle errors here
-      // instead of a catch() block so that we don't swallow
-      // exceptions from actual bugs in components.
-      (error) => {
-        console.error(`Error submitting input: ${error}`);
-      }
-    );
-};
+const { hasCommandModifier } = KeyBindingUtil;
+
+function myKeyBindingFn(e: SyntheticKeyboardEvent): string | null {
+  let cmd = "";
+  if (e.keyCode === 83 /* `S` key */ && hasCommandModifier(e)) {
+    cmd = EDITOR_CMD_SAVE;
+  }
+  if (e.keyCode === 13 /* `Return` key */ && hasCommandModifier(e)) {
+    cmd = EDITOR_CMD_SUBMIT;
+  }
+  if (cmd !== "") {
+    console.debug(`command pressed: ${cmd}`);
+    return cmd;
+  }
+  return getDefaultKeyBinding(e);
+}
 
 export default function App() {
-  const cmdReturnPress = useCMDEnterPressed();
-  const [promptInput, setPromptInput] = useState("");
-  const promptBoxContent = document.getElementById("promptBox");
-  const contenteditable = document.querySelector("[contenteditable]");
-
-  useEffect(() => {
-    if (cmdReturnPress) {
-      console.log(contenteditable.textContent);
-    }
-  }, [cmdReturnPress]);
-
-  const handleSubmit = (evt) => {
-    evt.preventDefault();
-    alert(`Submitting Name ${promptInput}`);
-  };
-
   const [editorState, setEditorState] = useState(() =>
     EditorState.createEmpty()
   );
 
+  /*
+  Returns { blockText, selectedText }
+  */
+  const getText = () => {
+    var selectionState = editorState.getSelection();
+    var anchorKey = selectionState.getAnchorKey();
+    var currentContent = editorState.getCurrentContent();
+    var currentContentBlock = currentContent.getBlockForKey(anchorKey);
+    var start = selectionState.getStartOffset();
+    var end = selectionState.getEndOffset();
+    const blockText = currentContentBlock.getText();
+    const selectedText = currentContentBlock.getText().slice(start, end);
+    const allText = currentContent.getPlainText();
+    return { blockText, selectedText, allText };
+  };
+
+  const handleKeyCommand = (command: string): DraftHandleValue => {
+    if (command === EDITOR_CMD_SAVE) {
+      // Perform a request to save your contents, set
+      // a new `editorState`, etc.
+      return "handled";
+    }
+    if (command === EDITOR_CMD_SUBMIT) {
+      const { blockText, selectedText, allText } = getText();
+      console.debug(
+        `${blockText}\nselected: '${selectedText}'\nall text: '${allText}'`
+      );
+      const submittedText = selectedText ? selectedText : allText;
+      const resp = submitPrompt(submittedText);
+      console.debug(resp);
+      return "handled";
+    }
+    return "not-handled";
+  };
+
   return (
     <div>
-      <Editor editorState={editorState} onChange={setEditorState} />
-      <div>{cmdReturnPress && "CMD + ENTER"}</div>
-      <form onSubmit={handleSubmit}>
-        <label>
-          First Name:
-          <input
-            type="text"
-            value={promptInput}
-            onChange={(e) => setPromptInput(e.target.value)}
-          />
-        </label>
-        <input type="submit" value="Submit" />
-      </form>
-      <div>
-        <div id="promptBox" contentEditable="true">
-          The following is a conversation with an AI assistant. The assistant
-          lives inside the user's journal and helps them think. The assistant is
-          helpful, creative, clever, and very friendly.
-        </div>
-        <div id="promptBox" contentEditable="true">
-          Human:
-        </div>
-      </div>
+      <p>------</p>
+      <Editor
+        editorState={editorState}
+        onChange={setEditorState}
+        handleKeyCommand={handleKeyCommand}
+        keyBindingFn={myKeyBindingFn}
+      />
+      <p>------</p>
     </div>
   );
 }
